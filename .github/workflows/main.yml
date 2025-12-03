@@ -1,0 +1,62 @@
+name: NodeJS CI/CD with Docker & Render (Template)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci-cd:
+    name: Build, Test, Dockerize & Deploy
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE_NAME: ${{ secrets.IMAGE_NAME }}              # Tên image của từng project
+      IMAGE_TAG: ${{ secrets.IMAGE_TAG || 'latest' }}    # Tag (default: latest)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Docker image
+        run: docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+      - name: Login to Docker Hub
+        run: echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+
+      - name: Tag image for Docker Hub
+        run: docker tag $IMAGE_NAME:$IMAGE_TAG docker.io/${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:$IMAGE_TAG
+
+      - name: Push image to Docker Hub
+        run: docker push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:$IMAGE_TAG
+
+      - name: Install Render CLI
+        run: |
+          curl -L https://github.com/render-oss/cli/releases/download/v1.1.0/cli_1.1.0_linux_amd64.zip -o render.zip
+          unzip -o render.zip -d render-cli
+          sudo mv render-cli/cli_v1.1.0 /usr/local/bin/render
+          render --version
+
+      - name: Deploy to Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          CI: true
+          DEPLOY_IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.IMAGE_NAME }}:${{ secrets.IMAGE_TAG || 'latest' }}
+        run: |
+          echo "Deploying Render service using $DEPLOY_IMAGE"
+          render deploys create ${{ secrets.RENDER_SERVICE_ID }} --image $DEPLOY_IMAGE --confirm --output json
